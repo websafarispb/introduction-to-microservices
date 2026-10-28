@@ -1,0 +1,82 @@
+services:
+  eureka-server:
+    build: ./eureka-server
+    ports:
+      - "127.0.0.1:8761:8761"
+    healthcheck:
+      # Healthy means the registry is up, not that clients have discovered each other yet
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8761/actuator/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  resource-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${RESOURCE_DB_NAME}
+      POSTGRES_USER: ${RESOURCE_DB_USER}
+      POSTGRES_PASSWORD: ${RESOURCE_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # Initialize tables on first startup
+      - ./init-scripts/resource-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h localhost: during initialization postgres accepts only socket connections, so this
+      # reports healthy only after the init scripts have finished
+      test: ["CMD-SHELL", "pg_isready -h localhost -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  song-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${SONG_DB_NAME}
+      POSTGRES_USER: ${SONG_DB_USER}
+      POSTGRES_PASSWORD: ${SONG_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ./init-scripts/song-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  resource-service:
+    build: ./resource-service
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: ${RESOURCE_DB_URL}
+      SPRING_DATASOURCE_USERNAME: ${RESOURCE_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${RESOURCE_DB_PASSWORD}
+      EUREKA_URL: ${EUREKA_URL}
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      resource-db:
+        condition: service_healthy
+      # Called only per request, not at startup; listed for start order
+      song-service:
+        condition: service_started
+
+  song-service:
+    build: ./song-service
+    deploy:
+      replicas: 2
+    ports:
+      # One host port per instance
+      - "127.0.0.1:8082-8083:8082"
+    environment:
+      SPRING_DATASOURCE_URL: ${SONG_DB_URL}
+      SPRING_DATASOURCE_USERNAME: ${SONG_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${SONG_DB_PASSWORD}
+      EUREKA_URL: ${EUREKA_URL}
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      song-db:
+        condition: service_healthy

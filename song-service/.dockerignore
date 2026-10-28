@@ -1,0 +1,6 @@
+# Build inputs are only pom.xml and src/; keep local build output and IDE files out of the context
+target/
+.idea/
+.vscode/
+*.iml
+.DS_Store
